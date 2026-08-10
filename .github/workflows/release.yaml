@@ -21,20 +21,31 @@ on:
     tags:
       - v*
   workflow_dispatch:
+    inputs:
+      RUST_TOOLCHAIN:
+        description: 'The Rust toolchain to use for the workflow'
+        required: false
+        default: 'stable'
   
 concurrency:
   group: "release-${{ github.head_ref || github.ref }}"
   cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  RUST_TOOLCHAIN: ${{ github.event.inputs.RUST_TOOLCHAIN || 'stable' }}
 
 jobs:
   check:
     uses: ./.github/workflows/check.yaml
 
   check-msrv:
-    uses: eclipse-uprotocol/ci-cd/.github/workflows/rust-verify-msrv.yaml@main
+    uses: eclipse-uprotocol/ci-cd/.github/workflows/rust-verify-msrv.yaml@ad3f99eac0675c714f08c473412dae14d9fecaa8
 
   coverage:
-    uses: eclipse-uprotocol/ci-cd/.github/workflows/rust-coverage.yaml@main
+    uses: eclipse-uprotocol/ci-cd/.github/workflows/rust-coverage.yaml@ad3f99eac0675c714f08c473412dae14d9fecaa8
 
   current-spec-compliance:
     runs-on: ubuntu-latest
@@ -42,18 +53,20 @@ jobs:
     # because we do not want the job to fail if not all requirements
     # are covered (yet)
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           submodules: "recursive"
+          persist-credentials: false
+
       - name: "Determine OpenFastTrace file patterns from .env file"
-        uses: xom9ikk/dotenv@ac290ca23a42155a0cba1031d23afa46240116a9 # v2.3.0
+        uses: xom9ikk/dotenv@d0a56edc74279820eabbe34477511327e710d0de # v2.4.0
         with:
           mode: "oft-current"
           load-mode: strict
         # this will run OFT and upload the results
       - name: Run OpenFastTrace
         id: run-oft
-        uses: eclipse-uprotocol/ci-cd/.github/actions/run-oft@main
+        uses: eclipse-uprotocol/ci-cd/.github/actions/run-oft@ad3f99eac0675c714f08c473412dae14d9fecaa8
         with:
           file-patterns: "${{ env.OFT_FILE_PATTERNS }}"
           tags: "${{ env.OFT_TAGS_}}"
@@ -71,81 +84,95 @@ jobs:
       - current-spec-compliance
     permissions: write-all
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           submodules: "recursive"
+          persist-credentials: false
 
       - name: "Determine uProtocol Specification file patterns from .env file"
-        uses: xom9ikk/dotenv@ac290ca23a42155a0cba1031d23afa46240116a9 # v2.3.0
+        uses: xom9ikk/dotenv@d0a56edc74279820eabbe34477511327e710d0de # v2.4.0
         with:
           mode: "oft-current"
           load-mode: strict
   
       # Requirements Tracing report - we later need the download_url output of the upload step
       - name: Download requirements tracing report
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: tracing-report-html
           path: dist/tracing/
       - name: Upload requirements tracing report to release
-        uses: svenstaro/upload-release-action@v2
         id: upload_requirements_tracing_report
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: dist/tracing/*
-          file_glob: true
-          tag: ${{ github.ref }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          archive="tracing-report-html.tar.gz"
+          tar -czf "$archive" -C dist tracing
+          gh release upload "$TAG" "$archive" --clobber
+          echo "browser_download_url=${{ github.server_url }}/${{ github.repository }}/releases/download/$TAG/$archive" >> "$GITHUB_OUTPUT"
 
       # Test report - we later need the download_url output of the upload step
       - name: Download test report
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: test-results
           path: dist/tests/
       - name: Upload test report to release
-        uses: svenstaro/upload-release-action@v2
         id: upload_test_report
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: dist/tests/*
-          file_glob: true
-          tag: ${{ github.ref }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          archive="test-results.tar.gz"
+          tar -czf "$archive" -C dist tests
+          gh release upload "$TAG" "$archive" --clobber
+          echo "browser_download_url=${{ github.server_url }}/${{ github.repository }}/releases/download/$TAG/$archive" >> "$GITHUB_OUTPUT"
 
       # Test coverage - we later need the download_url output of the upload step
       - name: Download test coverage
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: code-coverage-html
           path: dist/codecov/
       - name: Upload test coverage to release
-        uses: svenstaro/upload-release-action@v2
         id: upload_test_coverage
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: dist/codecov/*
-          file_glob: true
-          tag: ${{ github.ref }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          archive="code-coverage-html.tar.gz"
+          tar -czf "$archive" -C dist codecov
+          gh release upload "$TAG" "$archive" --clobber
+          echo "browser_download_url=${{ github.server_url }}/${{ github.repository }}/releases/download/$TAG/$archive" >> "$GITHUB_OUTPUT"
 
       # README - we later need the download_url output of the upload step
       - name: Upload README to release
-        uses: svenstaro/upload-release-action@v2
         id: upload_readme
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: README.md
-          tag: ${{ github.ref }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release upload "$TAG" README.md --clobber
+          echo "browser_download_url=${{ github.server_url }}/${{ github.repository }}/releases/download/$TAG/README.md" >> "$GITHUB_OUTPUT"
 
       - name: Gather uProtocol Specification documents
         shell: bash
         run: |
           tar cvz --file up-spec.tar.gz ${{ env.UP_SPEC_FILE_PATTERNS }}
       - name: Upload relevant uProtocol Spec files to release
-        uses: svenstaro/upload-release-action@v2
         id: upload_up_spec
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: up-spec.tar.gz
-          tag: ${{ github.ref }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release upload "$TAG" up-spec.tar.gz --clobber
+          echo "browser_download_url=${{ github.server_url }}/${{ github.repository }}/releases/download/$TAG/up-spec.tar.gz" >> "$GITHUB_OUTPUT"
   
       - name: Gets latest created release info
         id: latest_release_info
@@ -156,19 +183,21 @@ jobs:
       - name: Collect quality artifacts
         uses: eclipse-dash/quevee@b62d7faa1cf68654758754aaed8616b19f227583 # v1.0.0
         id: quevee_manifest
-        with:          
+        with:
           release_url: ${{ steps.latest_release_info.outputs.html_url }}
           artifacts_readme: ${{ steps.upload_readme.outputs.browser_download_url }}
           artifacts_requirements: ${{ steps.upload_up_spec.outputs.browser_download_url }}
           artifacts_testing: ${{ steps.upload_test_report.outputs.browser_download_url }},${{ steps.upload_test_coverage.outputs.browser_download_url }},${{ steps.upload_requirements_tracing_report.outputs.browser_download_url }}
 
       - name: Upload manifest to release
-        uses: svenstaro/upload-release-action@v2
         id: upload_quality_manifest
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: ${{ steps.quevee_manifest.outputs.manifest_file }}
-          tag: ${{ github.ref }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          MANIFEST_FILE: ${{ steps.quevee_manifest.outputs.manifest_file }}
+        run: |
+          gh release upload "$TAG" "${MANIFEST_FILE}" --clobber
 
   cargo-publish:
     name: publish to crates.io
@@ -179,9 +208,15 @@ jobs:
     env: 
       CRATES_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           submodules: "recursive"
+          persist-credentials: false
+
+      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        with: 
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          cache: false
 
       - if: env.CRATES_TOKEN == ''
         run: cargo publish --all-features --dry-run
